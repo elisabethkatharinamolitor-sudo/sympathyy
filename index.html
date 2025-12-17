@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sympathisch</title>
+  <style>
+    body { margin:0; min-height:100vh; display:grid; place-items:center; background:#000; }
+    #wrap { width:min(960px, 95vw); position:relative; }
+    canvas { width:100%; height:auto; background:#000; display:block; pointer-events:none; }
+    #overlay { position:absolute; inset:0; display:grid; place-items:center; background:rgba(0,0,0,0.35); }
+    #startBtn { font-size:20px; padding:16px 26px; border:0; border-radius:12px; cursor:pointer; }
+    video { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <canvas id="c"></canvas>
+
+    <div id="overlay">
+      <button id="startBtn">▶ Start</button>
+    </div>
+
+    <video id="v" playsinline preload="auto"
+      controlslist="nodownload noplaybackrate noremoteplayback"
+      disablepictureinpicture
+      oncontextmenu="return false">
+      <source src="sympathy.mp4" type="video/mp4">
+    </video>
+  </div>
+
+  <script>
+    const v = document.getElementById("v");
+    const c = document.getElementById("c");
+    const ctx = c.getContext("2d");
+    const overlay = document.getElementById("overlay");
+    const btn = document.getElementById("startBtn");
+
+    let started = false;
+    let pauseCount = 0;
+
+    function notifyParent(type, payload = {}) {
+      // Funktioniert, wenn die Seite in QuestionPro per iframe eingebettet ist
+      try {
+        window.parent?.postMessage(
+          { qpVideoEvent: type, condition: "sympathisch", ...payload },
+          "*"
+        );
+      } catch {}
+    }
+
+    // keine Controls, feste Geschwindigkeit
+    v.controls = false;
+    v.playbackRate = 1.0;
+    v.addEventListener("ratechange", () => {
+      if (v.playbackRate !== 1.0) v.playbackRate = 1.0;
+    });
+
+    // Pause-Versuch zählen + sofort weiterlaufen lassen
+    v.addEventListener("pause", () => {
+      if (!started || v.ended) return;
+      pauseCount += 1;
+      notifyParent("pauseAttempt", { pauseCount, t: Date.now(), currentTime: v.currentTime });
+      setTimeout(() => v.play().catch(()=>{}), 0);
+    });
+
+    // typische Tasten blocken (und als “PauseAttempt” zählen, falls gestartet)
+    window.addEventListener("keydown", (e) => {
+      const blocked = [" ", "k", "K", "MediaPlayPause", "MediaStop"];
+      if (blocked.includes(e.key)) {
+        if (started) {
+          pauseCount += 1;
+          notifyParent("pauseAttempt", { pauseCount, t: Date.now(), via: "keydown", key: e.key, currentTime: v.currentTime });
+        }
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    }, { capture:true, passive:false });
+
+    function resizeCanvas() {
+      c.width = v.videoWidth || 1280;
+      c.height = v.videoHeight || 720;
+    }
+
+    function drawLoop() {
+      if (!started) return;
+      if (v.readyState >= 2) {
+        if ((c.width !== v.videoWidth && v.videoWidth) || (c.height !== v.videoHeight && v.videoHeight)) resizeCanvas();
+        ctx.drawImage(v, 0, 0, c.width, c.height);
+      }
+      if ("requestVideoFrameCallback" in HTMLVideoElement.prototype) {
+        v.requestVideoFrameCallback(() => drawLoop());
+      } else {
+        requestAnimationFrame(drawLoop);
+      }
+    }
+
+    v.addEventListener("loadedmetadata", resizeCanvas);
+
+    btn.addEventListener("click", async () => {
+      try {
+        started = true;
+        overlay.style.display = "none";
+        notifyParent("started", { t: Date.now() });
+        await v.play();
+        drawLoop();
+      } catch {
+        alert("Bitte erneut auf Start klicken.");
+      }
+    });
+  </script>
+</body>
+</html>
